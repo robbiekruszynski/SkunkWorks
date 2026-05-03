@@ -5,6 +5,107 @@ export function w2s(wx, wy, cam, cw, ch) {
   return { x: wx * cam.zoom + cam.x + cw / 2, y: wy * cam.zoom + cam.y + ch / 2 }
 }
 
+export function drawSections(ctx, sections, activeSectionId, cam, cw, ch) {
+  for (const s of sections) {
+    const tl = w2s(s.x,           s.y,            cam, cw, ch)
+    const br = w2s(s.x + s.width, s.y + s.height, cam, cw, ch)
+    const sw = br.x - tl.x, sh = br.y - tl.y
+    if (sw < 2 || sh < 2) continue
+
+    const hot = s.id === activeSectionId
+
+    ctx.save()
+
+    // Column fill — only visible when hot
+    ctx.fillStyle = hot ? s.color + '18' : s.color + '06'
+    ctx.fillRect(tl.x, tl.y, sw, sh)
+
+    // Top accent line
+    ctx.fillStyle = hot ? s.color + 'cc' : s.color + '44'
+    ctx.fillRect(tl.x, tl.y, sw, hot ? 3 : 2)
+
+    // Vertical side guides
+    ctx.fillStyle = hot ? s.color + '30' : s.color + '12'
+    ctx.fillRect(tl.x,        tl.y + 3, 1, sh - 3)
+    ctx.fillRect(tl.x + sw - 1, tl.y + 3, 1, sh - 3)
+
+    // Header row
+    const hh = 26
+    ctx.fillStyle = hot ? s.color + '22' : s.color + '0a'
+    ctx.fillRect(tl.x, tl.y + 3, sw, hh)
+
+    // Label
+    ctx.font = `${hot ? 'bold' : 'normal'} 10px "Courier New"`
+    ctx.fillStyle = hot ? s.color : s.color + '99'
+    ctx.textAlign = 'left'
+    ctx.shadowColor = s.color
+    ctx.shadowBlur = hot ? 14 : 4
+    ctx.fillText(s.label, tl.x + 10, tl.y + 21)
+
+    ctx.restore()
+  }
+}
+
+export function drawSectionDockProgress(ctx, section, progress, cam, cw, ch) {
+  const tl = w2s(section.x,                 section.y, cam, cw, ch)
+  const br = w2s(section.x + section.width, section.y, cam, cw, ch)
+  const sw = br.x - tl.x
+
+  ctx.save()
+  ctx.fillStyle = section.color + '22'
+  ctx.fillRect(tl.x, tl.y + 3, sw, 4)
+  ctx.fillStyle = section.color
+  ctx.shadowColor = section.color
+  ctx.shadowBlur = 12
+  ctx.fillRect(tl.x, tl.y + 3, sw * progress, 4)
+  ctx.restore()
+}
+
+export function drawConnectionFlash(ctx, nodeA, nodeB, progress, cam, cw, ch) {
+  const a = Math.max(0, 1 - progress)
+  const sa = w2s(nodeA.x, nodeA.y, cam, cw, ch)
+  const sb = w2s(nodeB.x, nodeB.y, cam, cw, ch)
+
+  ctx.save()
+  ctx.beginPath(); ctx.moveTo(sa.x, sa.y); ctx.lineTo(sb.x, sb.y)
+  ctx.strokeStyle = `rgba(0,255,153,${a * 0.9})`
+  ctx.lineWidth = 1.5 + (1 - progress) * 5
+  ctx.shadowColor = '#00ff99'; ctx.shadowBlur = 24 * a
+  ctx.stroke()
+
+  for (const sp of [sa, sb]) {
+    const r = 30 + progress * 80
+    ctx.beginPath(); ctx.arc(sp.x, sp.y, r, 0, Math.PI * 2)
+    ctx.strokeStyle = `rgba(0,255,153,${a * 0.7})`
+    ctx.lineWidth = 2; ctx.shadowBlur = 18 * a
+    ctx.stroke()
+  }
+  ctx.restore()
+}
+
+export function drawSectionLockFlash(ctx, section, node, progress, cam, cw, ch) {
+  const a = Math.max(0, 1 - progress)
+  const tl = w2s(section.x,                 section.y, cam, cw, ch)
+  const br = w2s(section.x + section.width, section.y, cam, cw, ch)
+  const ns = w2s(node.x,                    node.y,    cam, cw, ch)
+  const sw = br.x - tl.x
+
+  ctx.save()
+  ctx.fillStyle = section.color + Math.round(a * 0xcc).toString(16).padStart(2, '0')
+  ctx.fillRect(tl.x, tl.y, sw, 3)
+
+  const hh = 26
+  ctx.fillStyle = section.color + Math.round(a * 0x30).toString(16).padStart(2, '0')
+  ctx.fillRect(tl.x, tl.y + 3, sw, hh)
+
+  const r = 50 + progress * 50
+  ctx.beginPath(); ctx.arc(ns.x, ns.y, r, 0, Math.PI * 2)
+  ctx.strokeStyle = section.color + Math.round(a * 0xaa).toString(16).padStart(2, '0')
+  ctx.lineWidth = 2.5; ctx.shadowColor = section.color; ctx.shadowBlur = 20 * a
+  ctx.stroke()
+  ctx.restore()
+}
+
 function rrect(ctx, x, y, w, h, r) {
   ctx.beginPath()
   ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y); ctx.arcTo(x + w, y, x + w, y + r, r)
@@ -14,7 +115,6 @@ function rrect(ctx, x, y, w, h, r) {
   ctx.closePath()
 }
 
-// ── Structural edges ──────────────────────────────────────────────
 export function drawEdges(ctx, nodes, edges, cam, cw, ch) {
   const t = (Date.now() % 4000) / 4000
   for (const [ai, bi] of edges) {
@@ -38,43 +138,77 @@ export function drawEdges(ctx, nodes, edges, cam, cw, ch) {
   }
 }
 
-// ── Tag edges (dashed, colored by tag) ───────────────────────────
-export function drawTagEdges(ctx, nodes, tagEdges, cam, cw, ch) {
+export function drawDockRing(ctx, node, progress, cam, cw, ch) {
+  const { x: sx, y: sy } = w2s(node.x, node.y, cam, cw, ch)
+  const radius = 72
+  const start  = -Math.PI / 2
+  const end    = start + Math.PI * 2 * progress
+
+  ctx.save()
+  ctx.beginPath()
+  ctx.arc(sx, sy, radius, 0, Math.PI * 2)
+  ctx.strokeStyle = 'rgba(0,255,153,0.08)'
+  ctx.lineWidth = 3
+  ctx.stroke()
+
+  ctx.beginPath()
+  ctx.arc(sx, sy, radius, start, end)
+  ctx.strokeStyle = `rgba(0,255,153,${0.4 + progress * 0.6})`
+  ctx.lineWidth = 3
+  ctx.shadowColor = '#00ff99'
+  ctx.shadowBlur = 16 * progress
+  ctx.stroke()
+
+  if (progress >= 1) {
+    ctx.beginPath()
+    ctx.arc(sx, sy, radius, 0, Math.PI * 2)
+    ctx.strokeStyle = '#00ff99'
+    ctx.lineWidth = 2
+    ctx.shadowBlur = 24
+    ctx.stroke()
+  }
+  ctx.restore()
+}
+
+export function drawParentEdges(ctx, nodes, cam, cw, ch) {
   const nodeMap = {}
   for (const n of nodes) nodeMap[n.id] = n
 
-  for (const e of tagEdges) {
-    const a = nodeMap[e.source], b = nodeMap[e.target]
-    if (!a || !b) continue
-    const as = w2s(a.x, a.y, cam, cw, ch)
-    const bs = w2s(b.x, b.y, cam, cw, ch)
-    const color = tagColor(e.tag)
-    const lit   = a.hovered || b.hovered || a.grabbed || b.grabbed
+  for (const child of nodes) {
+    if (!child.parentIds || child.parentIds.length === 0) continue
+    for (const pid of child.parentIds) {
+    const parent = nodeMap[pid]
+    if (!parent) continue
+
+    const ps  = w2s(parent.x, parent.y, cam, cw, ch)
+    const cs  = w2s(child.x,  child.y,  cam, cw, ch)
+    const lit = child.hovered || parent.hovered || child.grabbed || parent.grabbed
 
     ctx.save()
-    ctx.beginPath(); ctx.moveTo(as.x, as.y); ctx.lineTo(bs.x, bs.y)
-    ctx.strokeStyle = lit ? color + 'cc' : color + '44'
-    ctx.lineWidth   = lit ? 1.5 : 1
-    ctx.setLineDash([4, 6])
-    ctx.shadowColor = color
+    ctx.beginPath(); ctx.moveTo(ps.x, ps.y); ctx.lineTo(cs.x, cs.y)
+    ctx.strokeStyle = lit ? 'rgba(0,255,153,0.65)' : 'rgba(0,255,153,0.18)'
+    ctx.lineWidth   = lit ? 1.6 : 0.9
+    ctx.setLineDash([5, 5])
+    ctx.shadowColor = '#00ff99'
     ctx.shadowBlur  = lit ? 12 : 4
     ctx.stroke()
 
-    // Tag label at midpoint
-    if (lit) {
-      const mx = (as.x + bs.x) / 2, my = (as.y + bs.y) / 2
-      ctx.setLineDash([])
-      ctx.font      = '6px "Courier New"'
-      ctx.fillStyle = color
-      ctx.textAlign = 'center'
-      ctx.shadowBlur = 8
-      ctx.fillText('#' + e.tag, mx, my - 4)
-    }
+    const angle = Math.atan2(cs.y - ps.y, cs.x - ps.x)
+    const al = 8, aw = 0.35
+    ctx.setLineDash([])
+    ctx.beginPath()
+    ctx.moveTo(cs.x, cs.y)
+    ctx.lineTo(cs.x - al * Math.cos(angle - aw), cs.y - al * Math.sin(angle - aw))
+    ctx.lineTo(cs.x - al * Math.cos(angle + aw), cs.y - al * Math.sin(angle + aw))
+    ctx.closePath()
+    ctx.fillStyle = lit ? 'rgba(0,255,153,0.7)' : 'rgba(0,255,153,0.25)'
+    ctx.shadowBlur = lit ? 8 : 2
+    ctx.fill()
     ctx.restore()
+    }
   }
 }
 
-// ── Node card ─────────────────────────────────────────────────────
 export function drawNode(ctx, n, cam, cw, ch) {
   const { x: sx, y: sy } = w2s(n.x, n.y, cam, cw, ch)
   const pal     = PALETTE[n.type] || PALETTE.CONCEPT
@@ -93,34 +227,31 @@ export function drawNode(ctx, n, cam, cw, ch) {
   ctx.stroke()
   ctx.shadowBlur  = 0
 
-  // Header strip
   rrect(ctx, sx - W/2, sy - H/2, W, 22, R)
   ctx.fillStyle = pal.dim + 'ee'; ctx.fill()
 
   ctx.fillStyle = pal.hi; ctx.font = '6px "Courier New"'; ctx.textAlign = 'left'
   ctx.fillText(n.type, sx - W/2 + 7, sy - H/2 + 14)
-  ctx.fillStyle = '#ff444488'; ctx.font = '5px "Courier New"'; ctx.textAlign = 'right'
-  ctx.fillText(`NODE-${String(n.id).padStart(2,'0')}`, sx + W/2 - 6, sy - H/2 + 14)
+  const roleBadge = n.role === 'parent' ? '◈ PARENT' : n.role === 'child' ? '⊂ CHILD' : `NODE-${String(n.id).padStart(2,'0')}`
+  const roleColor = n.role === 'parent' ? '#00ff9988' : n.role === 'child' ? '#00ccff88' : '#ff444488'
+  ctx.fillStyle = roleColor; ctx.font = '5px "Courier New"'; ctx.textAlign = 'right'
+  ctx.fillText(roleBadge, sx + W/2 - 6, sy - H/2 + 14)
 
-  // Label
   ctx.shadowColor = pal.hi; ctx.shadowBlur = 6
   ctx.fillStyle   = '#e8f4ff'; ctx.font = 'bold 9px "Courier New"'; ctx.textAlign = 'center'
   ctx.fillText(n.label, sx, sy - H/2 + 37)
   ctx.shadowBlur  = 0
 
-  // Divider
   ctx.beginPath()
   ctx.moveTo(sx - W/2 + 8, sy - H/2 + 42); ctx.lineTo(sx + W/2 - 8, sy - H/2 + 42)
   ctx.strokeStyle = pal.hi + '33'; ctx.lineWidth = 0.5; ctx.stroke()
 
-  // Content preview (first line)
   if (n.content) {
     const preview = n.content.slice(0, 36) + (n.content.length > 36 ? '…' : '')
     ctx.font = '5.5px "Courier New"'; ctx.fillStyle = '#2a5a70'; ctx.textAlign = 'center'
     ctx.fillText(preview, sx, sy - H/2 + 55)
   }
 
-  // Data rows (if no content, show data)
   if (!n.content && n.data) {
     ctx.font = '6.5px "Courier New"'
     let row  = sy - H/2 + 56
@@ -133,7 +264,6 @@ export function drawNode(ctx, n, cam, cw, ch) {
     }
   }
 
-  // Tag strip
   if (hasTags) {
     const tagY = sy + H/2 - 18
     ctx.beginPath()
@@ -156,7 +286,6 @@ export function drawNode(ctx, n, cam, cw, ch) {
     }
   }
 
-  // Grab brackets
   if (n.grabbed) {
     const bx = sx - W/2 - 5, by = sy - H/2 - 5, bw = W + 10, bh = H + 10, cs = 14
     ctx.strokeStyle = pal.hi; ctx.lineWidth = 1.5; ctx.shadowColor = pal.hi; ctx.shadowBlur = 14
@@ -171,7 +300,6 @@ export function drawNode(ctx, n, cam, cw, ch) {
   ctx.restore()
 }
 
-// ── Hand skeleton ─────────────────────────────────────────────────
 const HAND_BONES = [
   [0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],
   [9,10],[10,11],[11,12],[13,14],[14,15],[15,16],

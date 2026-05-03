@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
 import Gate        from './components/Gate.jsx'
 import GraphCanvas from './components/GraphCanvas.jsx'
 import HUD         from './components/HUD.jsx'
@@ -6,9 +6,10 @@ import DebugPanel  from './components/DebugPanel.jsx'
 import ModeToggle  from './components/ModeToggle.jsx'
 import NodeEditor  from './components/NodeEditor.jsx'
 import { useHandTracking } from './hooks/useHandTracking.js'
-import { INITIAL_NODES, EDGES, computeTagEdges } from './data/graphData.js'
+import { INITIAL_NODES, DEFAULT_SECTIONS } from './data/graphData.js'
 
-const INIT_NODES = INITIAL_NODES.map(n => ({ ...n }))
+const INIT_NODES    = INITIAL_NODES.map(n => ({ ...n }))
+const INIT_SECTIONS = DEFAULT_SECTIONS.map(s => ({ ...s }))
 
 export default function App() {
   const [started,      setStarted]      = useState(false)
@@ -16,21 +17,17 @@ export default function App() {
   const [debug,        setDebug]        = useState(true)
   const [editingId,    setEditingId]    = useState(null)
   const [nodes,        setNodes]        = useState(INIT_NODES)
+  const [sections,     setSections]     = useState(INIT_SECTIONS)
   const [stats,        setStats]        = useState({ fps: 0, zoom: 1, grabbedNode: null, panActive: false })
 
-  // videoRef always mounted so onActivate can attach stream immediately
   const videoRef    = useRef(null)
   const cameraReady = useRef(false)
 
   const handState = useHandTracking(videoRef, started && mode === 'hand')
 
-  // Tag edges derived from node tags
-  const tagEdges = useMemo(() => computeTagEdges(nodes), [nodes])
-
   const onStatsUpdate = useCallback(s => setStats(s), [])
   const onNodeClick   = useCallback(id => setEditingId(id), [])
 
-  // Keyboard shortcuts
   useEffect(() => {
     const onKey = e => {
       if (e.key.toLowerCase() === 'd') setDebug(v => !v)
@@ -42,7 +39,6 @@ export default function App() {
 
   function onActivate(stream) {
     if (stream && videoRef.current) {
-      // videoRef.current is valid here because <video> is always rendered below
       videoRef.current.srcObject = stream
       videoRef.current.play().catch(() => {})
       cameraReady.current = true
@@ -58,19 +54,57 @@ export default function App() {
     setNodes(prev => prev.map(n => n.id === updated.id ? updated : n))
   }
 
+  function onConnect(childId, parentId) {
+    setNodes(prev => prev.map(n => {
+      if (n.id === childId) {
+        const ids = n.parentIds || []
+        return { ...n, role: 'child', parentIds: ids.includes(parentId) ? ids : [...ids, parentId] }
+      }
+      if (n.id === parentId && n.role !== 'parent') return { ...n, role: 'parent' }
+      return n
+    }))
+  }
+
+  function onSwap(nodeId, parentNodeId) {
+    setNodes(prev => prev.map(n => {
+      if (n.id === nodeId) {
+        const newIds = (n.parentIds || []).filter(id => id !== parentNodeId)
+        return { ...n, role: newIds.length === 0 ? 'parent' : 'child', parentIds: newIds }
+      }
+      if (n.id === parentNodeId) {
+        const newIds = [...(n.parentIds || []), nodeId]
+        return { ...n, role: 'child', parentIds: newIds }
+      }
+      return n
+    }))
+  }
+
+  function onSectionUpdate(id, x, y) {
+    setSections(prev => prev.map(s => s.id === id ? { ...s, x, y } : s))
+  }
+
+  function onAssignSection(nodeId, sectionId) {
+    setNodes(prev => {
+      const children = prev.filter(n => (n.parentIds || []).includes(nodeId)).map(n => n.id)
+      return prev.map(n => {
+        if (n.id === nodeId || children.includes(n.id)) return { ...n, sectionId }
+        return n
+      })
+    })
+  }
+
   const editingNode = editingId !== null ? nodes.find(n => n.id === editingId) : null
 
   return (
     <>
-      {/* Video always mounted so videoRef is valid before Gate closes */}
       <video
         ref={videoRef}
         style={{
           position: 'fixed', inset: 0,
           width: '100%', height: '100%',
           objectFit: 'cover', transform: 'scaleX(-1)',
-          opacity: started ? 0.28 : 0,
-          filter: 'saturate(0.2) brightness(0.55) hue-rotate(180deg)',
+          opacity: 0,
+          filter: 'none',
           zIndex: 0,
           transition: 'opacity 0.6s',
           pointerEvents: 'none',
@@ -84,12 +118,15 @@ export default function App() {
         <>
           <GraphCanvas
             nodes={nodes}
-            tagEdges={tagEdges}
+            sections={sections}
             handState={handState}
             mode={mode}
             videoRef={videoRef}
             onNodeClick={onNodeClick}
             onStatsUpdate={onStatsUpdate}
+            onConnect={onConnect}
+            onSectionUpdate={onSectionUpdate}
+            onAssignSection={onAssignSection}
           />
 
           <HUD
@@ -100,7 +137,7 @@ export default function App() {
             mode={mode}
             zoom={stats.zoom}
             nodeCount={nodes.length}
-            edgeCount={EDGES.length + tagEdges.length}
+            edgeCount={nodes.reduce((sum, n) => sum + (n.parentIds?.length || 0), 0)}
             fps={stats.fps}
           />
 
@@ -118,8 +155,10 @@ export default function App() {
       {editingNode && (
         <NodeEditor
           node={editingNode}
+          allNodes={nodes}
           onSave={saveNode}
           onClose={() => setEditingId(null)}
+          onSwap={onSwap}
         />
       )}
     </>

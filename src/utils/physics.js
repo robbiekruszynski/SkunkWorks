@@ -12,8 +12,8 @@ export function stepPhysics(nodes, edges) {
       const d  = Math.hypot(dx, dy) || 1
       const f  = REPEL / (d * d)
       const fx = (dx / d) * f, fy = (dy / d) * f
-      if (!nodes[i].pinned) { nodes[i].vx -= fx; nodes[i].vy -= fy }
-      if (!nodes[j].pinned) { nodes[j].vx += fx; nodes[j].vy += fy }
+      if (!nodes[i].pinned && !nodes[i].anchored) { nodes[i].vx -= fx; nodes[i].vy -= fy }
+      if (!nodes[j].pinned && !nodes[j].anchored) { nodes[j].vx += fx; nodes[j].vy += fy }
     }
   }
 
@@ -23,12 +23,12 @@ export function stepPhysics(nodes, edges) {
     const d  = Math.hypot(dx, dy) || 1
     const f  = (d - TARGET) * SPRING
     const fx = (dx / d) * f, fy = (dy / d) * f
-    if (!a.pinned) { a.vx += fx; a.vy += fy }
-    if (!b.pinned) { b.vx -= fx; b.vy -= fy }
+    if (!a.pinned && !a.anchored) { a.vx += fx; a.vy += fy }
+    if (!b.pinned && !b.anchored) { b.vx -= fx; b.vy -= fy }
   }
 
   for (const n of nodes) {
-    if (n.pinned) { n.vx = 0; n.vy = 0; continue }
+    if (n.pinned || n.anchored) { n.vx = 0; n.vy = 0; continue }
     n.vx += -n.x * CENTER
     n.vy += -n.y * CENTER
     n.vx *= DAMP

@@ -88,17 +88,24 @@ const C = {
 
 import { PALETTE } from '../data/graphData.js'
 
-export default function NodeEditor({ node, onSave, onClose }) {
+export default function NodeEditor({ node, allNodes, onSave, onClose, onSwap }) {
   const [label,    setLabel]    = useState(node.label)
   const [type,     setType]     = useState(node.type)
   const [content,  setContent]  = useState(node.content || '')
   const [tags,     setTags]     = useState([...(node.tags || [])])
   const [tagInput, setTagInput] = useState('')
+  const [role,      setRole]      = useState(node.role || 'standalone')
+  const [parentIds, setParentIds] = useState(node.parentIds || [])
   const inputRef = useRef(null)
+
+  const availableParents = (allNodes || []).filter(n => n.id !== node.id && n.role === 'parent')
+
+  function toggleParent(id) {
+    setParentIds(prev => prev.includes(id) ? prev.filter(p => p !== id) : [...prev, id])
+  }
 
   useEffect(() => { inputRef.current?.focus() }, [])
 
-  // Close on Escape
   useEffect(() => {
     const onKey = e => { if (e.key === 'Escape') handleSave() }
     window.addEventListener('keydown', onKey)
@@ -113,19 +120,23 @@ export default function NodeEditor({ node, onSave, onClose }) {
 
   function removeTag(tag) { setTags(prev => prev.filter(t => t !== tag)) }
 
+  function handleRoleChange(newRole) {
+    setRole(newRole)
+    if (newRole !== 'child') setParentIds([])
+  }
+
   function handleSave() {
-    onSave({ ...node, label: label.trim() || node.label, type, content, tags })
+    const resolvedParentIds = role === 'child' ? parentIds : []
+    onSave({ ...node, label: label.trim() || node.label, type, content, tags, role, parentIds: resolvedParentIds })
     onClose()
   }
 
-  // Stop clicks inside panel from hitting canvas
   function stopProp(e) { e.stopPropagation() }
 
   return (
     <div style={C.backdrop} onMouseDown={handleSave}>
       <div style={C.panel} onMouseDown={stopProp}>
 
-        {/* Header */}
         <div style={C.header}>
           <span style={C.nodeId}>◈ NODE-{String(node.id).padStart(2,'0')} // EDIT MODE</span>
           <button style={C.closeBtn} onClick={handleSave} title="Save & close (Esc)">×</button>
@@ -133,7 +144,6 @@ export default function NodeEditor({ node, onSave, onClose }) {
 
         <div style={C.body}>
 
-          {/* Title */}
           <div>
             <div style={C.label}>TITLE</div>
             <input
@@ -145,7 +155,6 @@ export default function NodeEditor({ node, onSave, onClose }) {
             />
           </div>
 
-          {/* Type selector */}
           <div>
             <div style={C.label}>TYPE</div>
             <div style={C.typeRow}>
@@ -161,7 +170,6 @@ export default function NodeEditor({ node, onSave, onClose }) {
             </div>
           </div>
 
-          {/* Content */}
           <div>
             <div style={C.label}>NOTES</div>
             <textarea
@@ -173,9 +181,8 @@ export default function NodeEditor({ node, onSave, onClose }) {
             />
           </div>
 
-          {/* Tags */}
           <div>
-            <div style={C.label}>TAGS — shared tags create connections between nodes</div>
+            <div style={C.label}>TAGS</div>
             <div style={C.tagsWrap}>
               {tags.map(tag => {
                 const color = tagColor(tag)
@@ -199,9 +206,92 @@ export default function NodeEditor({ node, onSave, onClose }) {
             </div>
           </div>
 
+          <div>
+            <div style={C.label}>ROLE — drag a parent to move all its children</div>
+            <div style={{ display: 'flex', gap: 6 }}>
+              {['standalone', 'parent', 'child'].map(r => {
+                const roleColor = r === 'parent' ? '#00ff99' : r === 'child' ? '#00ccff' : '#4a6a80'
+                const active    = role === r
+                return (
+                  <button
+                    key={r}
+                    style={{
+                      padding: '4px 12px', fontSize: 7, letterSpacing: '0.12em',
+                      fontFamily: "'Courier New', monospace", cursor: 'pointer',
+                      background: active ? roleColor + '22' : 'transparent',
+                      border: `1px solid ${active ? roleColor : roleColor + '44'}`,
+                      color: active ? roleColor : roleColor + '77',
+                    }}
+                    onClick={() => handleRoleChange(r)}
+                  >
+                    {r === 'standalone' ? '◌ STANDALONE' : r === 'parent' ? '◈ PARENT' : '⊂ CHILD'}
+                  </button>
+                )
+              })}
+            </div>
+
+            {role === 'child' && (
+              <div style={{ marginTop: 10 }}>
+                <div style={C.label}>ASSIGN TO PARENTS — select one or more</div>
+                {availableParents.length === 0 ? (
+                  <div style={{ fontSize: 7, color: '#ff884466', letterSpacing: '0.1em', marginTop: 4 }}>
+                    NO PARENT NODES DEFINED — MARK ANOTHER NODE AS PARENT FIRST
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
+                    {availableParents.map(p => {
+                      const sel = parentIds.includes(p.id)
+                      return (
+                        <button
+                          key={p.id}
+                          style={{
+                            padding: '3px 10px', fontSize: 7, letterSpacing: '0.1em',
+                            fontFamily: "'Courier New', monospace", cursor: 'pointer',
+                            background: sel ? '#00ff9922' : 'transparent',
+                            border: `1px solid ${sel ? '#00ff99' : '#00ff9944'}`,
+                            color: sel ? '#00ff99' : '#00ff9977',
+                          }}
+                          onClick={() => toggleParent(p.id)}
+                        >
+                          {sel ? '◈ ' : '◌ '}{p.label}
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {role === 'child' && parentIds.length > 0 && onSwap && (
+              <div style={{ marginTop: 10 }}>
+                <div style={C.label}>SWAP RELATIONSHIP — make this the parent instead</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
+                  {parentIds.map(pid => {
+                    const p = (allNodes || []).find(n => n.id === pid)
+                    if (!p) return null
+                    return (
+                      <button
+                        key={pid}
+                        style={{
+                          padding: '3px 10px', fontSize: 7, letterSpacing: '0.1em',
+                          fontFamily: "'Courier New', monospace", cursor: 'pointer',
+                          background: 'transparent',
+                          border: '1px solid #ffaa0055',
+                          color: '#ffaa0099',
+                        }}
+                        onClick={() => { onSwap(node.id, pid); onClose() }}
+                      >
+                        ⇄ SWAP WITH {p.label}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+
         </div>
 
-        {/* Footer */}
         <div style={C.footer}>
           <button style={C.cancelBtn} onClick={onClose}>DISCARD</button>
           <button style={C.saveBtn}   onClick={handleSave}>SAVE ▶</button>
