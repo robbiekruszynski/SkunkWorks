@@ -88,7 +88,7 @@ const C = {
 
 import { PALETTE } from '../data/graphData.js'
 
-export default function NodeEditor({ node, allNodes, onSave, onClose, onSwap }) {
+export default function NodeEditor({ node, allNodes, onSave, onClose, onSwap, onDetach }) {
   const [label,    setLabel]    = useState(node.label)
   const [type,     setType]     = useState(node.type)
   const [content,  setContent]  = useState(node.content || '')
@@ -242,19 +242,39 @@ export default function NodeEditor({ node, allNodes, onSave, onClose, onSwap }) 
                     {availableParents.map(p => {
                       const sel = parentIds.includes(p.id)
                       return (
-                        <button
-                          key={p.id}
-                          style={{
-                            padding: '3px 10px', fontSize: 7, letterSpacing: '0.1em',
-                            fontFamily: "'Courier New', monospace", cursor: 'pointer',
-                            background: sel ? '#00ff9922' : 'transparent',
-                            border: `1px solid ${sel ? '#00ff99' : '#00ff9944'}`,
-                            color: sel ? '#00ff99' : '#00ff9977',
-                          }}
-                          onClick={() => toggleParent(p.id)}
-                        >
-                          {sel ? '◈ ' : '◌ '}{p.label}
-                        </button>
+                        <div key={p.id} style={{ display: 'flex', gap: 3 }}>
+                          <button
+                            style={{
+                              padding: '3px 10px', fontSize: 7, letterSpacing: '0.1em',
+                              fontFamily: "'Courier New', monospace", cursor: 'pointer',
+                              background: sel ? '#00ff9922' : 'transparent',
+                              border: `1px solid ${sel ? '#00ff99' : '#00ff9944'}`,
+                              color: sel ? '#00ff99' : '#00ff9977',
+                            }}
+                            onClick={() => toggleParent(p.id)}
+                          >
+                            {sel ? '◈ ' : '◌ '}{p.label}
+                          </button>
+                          {sel && onDetach && (
+                            <button
+                              title="Detach from this parent"
+                              style={{
+                                padding: '3px 8px', fontSize: 9, cursor: 'pointer',
+                                fontFamily: "'Courier New', monospace",
+                                background: 'transparent',
+                                border: '1px solid #ff663344',
+                                color: '#ff6633aa',
+                              }}
+                              onClick={() => {
+                                onDetach(node.id, p.id)
+                                setParentIds(prev => prev.filter(id => id !== p.id))
+                                if (parentIds.length === 1) setRole('standalone')
+                              }}
+                            >
+                              ⊗
+                            </button>
+                          )}
+                        </div>
                       )
                     })}
                   </div>
