@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import Gate        from './components/Gate.jsx'
+import Signals     from './components/Signals.jsx'
 import GraphCanvas from './components/GraphCanvas.jsx'
 import HUD         from './components/HUD.jsx'
 import DebugPanel  from './components/DebugPanel.jsx'
@@ -12,32 +13,45 @@ const INIT_NODES    = INITIAL_NODES.map(n => ({ ...n }))
 const INIT_SECTIONS = DEFAULT_SECTIONS.map(s => ({ ...s }))
 
 export default function App() {
-  const [started,      setStarted]      = useState(false)
+  // phase: 'gate' | 'signals' | 'board'
+  const [phase,        setPhase]        = useState('gate')
   const [mode,         setMode]         = useState('hand')
   const [debug,        setDebug]        = useState(true)
   const [editingId,    setEditingId]    = useState(null)
+  const [focusId,      setFocusId]      = useState(null)
   const [nodes,        setNodes]        = useState(INIT_NODES)
   const [sections,     setSections]     = useState(INIT_SECTIONS)
   const [stats,        setStats]        = useState({ fps: 0, zoom: 1, grabbedNode: null, panActive: false })
 
-  const videoRef    = useRef(null)
-  const cameraReady = useRef(false)
+  const videoRef          = useRef(null)
+  const cameraReady       = useRef(false)
+  const pendingStreamRef  = useRef(null)
 
-  const handState = useHandTracking(videoRef, started && mode === 'hand')
+  const handState = useHandTracking(videoRef, phase === 'board' && mode === 'hand')
 
   const onStatsUpdate = useCallback(s => setStats(s), [])
   const onNodeClick   = useCallback(id => setEditingId(id), [])
+  const onFocusNode   = useCallback(id => setFocusId(id),   [])
 
   useEffect(() => {
     const onKey = e => {
       if (e.key.toLowerCase() === 'd') setDebug(v => !v)
       if (e.key.toLowerCase() === 'm') setMode(v => v === 'hand' ? 'mouse' : 'hand')
+      if (e.key === 'Escape') { setFocusId(null); setEditingId(null) }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  function onActivate(stream) {
+  // Gate → Signals: stash the camera stream and show the tutorial
+  function onGateActivate(stream) {
+    pendingStreamRef.current = stream
+    setPhase('signals')
+  }
+
+  // Signals → Board: wire up the camera (if we have it) and start
+  function onSignalsInitiate() {
+    const stream = pendingStreamRef.current
     if (stream && videoRef.current) {
       videoRef.current.srcObject = stream
       videoRef.current.play().catch(() => {})
@@ -47,7 +61,7 @@ export default function App() {
       cameraReady.current = false
       setMode('mouse')
     }
-    setStarted(true)
+    setPhase('board')
   }
 
   function saveNode(updated) {
@@ -126,9 +140,10 @@ export default function App() {
         playsInline muted autoPlay
       />
 
-      {!started && <Gate onActivate={onActivate} />}
+      {phase === 'gate'    && <Gate    onActivate={onGateActivate} />}
+      {phase === 'signals' && <Signals onInitiate={onSignalsInitiate} hasCamera={!!pendingStreamRef.current} />}
 
-      {started && (
+      {phase === 'board' && (
         <>
           <GraphCanvas
             nodes={nodes}
@@ -137,11 +152,13 @@ export default function App() {
             mode={mode}
             videoRef={videoRef}
             onNodeClick={onNodeClick}
+            onFocusNode={onFocusNode}
             onStatsUpdate={onStatsUpdate}
             onConnect={onConnect}
             onDisconnect={onDisconnect}
             onSectionUpdate={onSectionUpdate}
             onAssignSection={onAssignSection}
+            focusNodeId={focusId}
           />
 
           <HUD
@@ -164,10 +181,30 @@ export default function App() {
           )}
 
           <ModeToggle mode={mode} onChange={setMode} />
+
+          {focusId !== null && (
+            <button
+              onClick={() => setFocusId(null)}
+              style={{
+                position: 'fixed', top: 16, left: 16, zIndex: 20,
+                background: 'rgba(0,6,20,0.90)',
+                border: '1px solid #00ccff55',
+                color: '#00ccff',
+                fontFamily: "'Courier New', monospace",
+                fontSize: 10, letterSpacing: '0.18em',
+                padding: '9px 18px',
+                cursor: 'pointer',
+                textShadow: '0 0 10px #00ccff',
+                boxShadow: '0 0 14px rgba(0,204,255,0.18)',
+              }}
+            >
+              ← BOARD
+            </button>
+          )}
         </>
       )}
 
-      {editingNode && (
+      {phase === 'board' && editingNode && (
         <NodeEditor
           node={editingNode}
           allNodes={nodes}

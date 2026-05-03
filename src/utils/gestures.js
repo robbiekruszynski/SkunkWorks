@@ -1,4 +1,4 @@
-export const PINCH_THRESHOLD = 0.08
+export const PINCH_THRESHOLD = 0.040
 
 export function lm2s(lm, canvasWidth, canvasHeight) {
   return {
@@ -28,4 +28,9 @@ export function pinchScreen(lms, cw, ch) {
 
 export function indexTipScreen(lms, cw, ch) {
   return lm2s(lms[8], cw, ch)
+}
+
+// Fist: all fingertips curled below their PIP joints (y increases downward in image space)
+export function isFist(lms) {
+  return [[8,6],[12,10],[16,14],[20,18]].every(([tip,pip]) => lms[tip].y > lms[pip].y)
 }

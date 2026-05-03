@@ -509,6 +509,27 @@ export function drawNode(ctx, n, cam, cw, ch) {
   ctx.fillText(roleBadge, x0 + W - 9 * z, y0 + HH * 0.68)
   ctx.shadowBlur = 0
 
+  // Child count badge — top-right corner of card for parent nodes
+  if (n.role === 'parent' && n.childCount != null) {
+    const bR  = 11 * z
+    const bx  = x0 + W - bR * 0.6
+    const by  = y0 + bR * 0.6
+    const col = n.collapsed ? '#cc4400' : '#ffaa00'
+    ctx.save()
+    ctx.beginPath(); ctx.arc(bx, by, bR, 0, Math.PI * 2)
+    ctx.fillStyle = col; ctx.shadowColor = col; ctx.shadowBlur = 14; ctx.fill()
+    ctx.shadowBlur = 0
+    // thin border
+    ctx.strokeStyle = n.collapsed ? '#ff6622' : '#ffe066'
+    ctx.lineWidth = 1; ctx.stroke()
+    ctx.fillStyle = '#000'
+    ctx.font = `bold ${Math.round(8 * z)}px "Courier New"`
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
+    ctx.fillText(n.collapsed ? `▶${n.childCount}` : String(n.childCount), bx, by)
+    ctx.textBaseline = 'alphabetic'
+    ctx.restore()
+  }
+
   // Main label
   ctx.shadowColor = pal.hi; ctx.shadowBlur = 7
   ctx.fillStyle = '#e8f4ff'; ctx.font = `bold ${13 * z}px "Courier New"`; ctx.textAlign = 'center'
