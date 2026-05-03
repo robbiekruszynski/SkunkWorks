@@ -3,17 +3,17 @@ import { stepPhysics } from '../utils/physics.js'
 import { isPinching, isApproachingPinch, pinchScreen, indexTipScreen } from '../utils/gestures.js'
 import {
   w2s,
-  drawSections, drawSectionDockProgress, drawSectionLockFlash,
+  drawSectionBodies, drawSectionLabels, drawSectionDockProgress, drawSectionLockFlash,
   drawConnectionFlash,
-  drawDockRing, drawParentEdges, drawNode,
-  drawHandSkeleton, drawPinchRing, drawApproachRing, drawCursor,
+  drawDockRing, drawParentEdges, drawTagLinks, applyTagHighlights, drawNode,
+  drawHandSkeleton, drawPinchRing, drawApproachRing, drawCursor, drawMouseCursor,
 } from '../utils/draw.js'
 
 const CONN_FLASH_MS    = 700
 const SECTION_FLASH_MS = 600
 const DOCK_MS          = 500
 
-export default function GraphCanvas({ nodes, sections, handState, mode, videoRef, onNodeClick, onStatsUpdate, onConnect, onSectionUpdate, onAssignSection }) {
+export default function GraphCanvas({ nodes, sections, handState, mode, videoRef, onNodeClick, onStatsUpdate, onConnect, onDisconnect, onSectionUpdate, onAssignSection }) {
   const canvasRef = useRef(null)
 
   const nodesRef = useRef(null)
@@ -43,10 +43,12 @@ export default function GraphCanvas({ nodes, sections, handState, mode, videoRef
     }
   }, [sections])
 
-  const camRef  = useRef({ x: 0, y: 0, zoom: 1 })
-  const handRef = useRef([])
-  const modeRef = useRef(mode)
-  const fpsRef  = useRef({ count: 0, fps: 0, last: Date.now() })
+  const camRef      = useRef({ x: 0, y: 0, zoom: 1 })
+  const handRef     = useRef([])
+  const modeRef     = useRef(mode)
+  const mousePosRef = useRef({ x: -999, y: -999 })
+  const zoomingRef  = useRef(false)
+  const fpsRef      = useRef({ count: 0, fps: 0, last: Date.now() })
 
   const gestureRef = useRef({
     h: [
@@ -64,8 +66,8 @@ export default function GraphCanvas({ nodes, sections, handState, mode, videoRef
     sectionNodes: [], sectionNodeOffsets: [],
   })
 
-  // Card-to-card dock ring state
-  const dockRef = useRef({ target: null, startTime: null })
+  // Card-to-card dock ring state — mode: 'connect' | 'detach'
+  const dockRef = useRef({ target: null, startTime: null, mode: 'connect' })
   // Section dock bar state
   const sectionDockRef = useRef({ target: null, startTime: null })
   // Flash queues
@@ -73,9 +75,11 @@ export default function GraphCanvas({ nodes, sections, handState, mode, videoRef
   const sectionFlashRef = useRef([]) // [{sectionId, nodeId, time}]
 
   const onConnectRef       = useRef(onConnect)
+  const onDisconnectRef    = useRef(onDisconnect)
   const onSectionUpdateRef = useRef(onSectionUpdate)
   const onAssignSectionRef = useRef(onAssignSection)
   useEffect(() => { onConnectRef.current       = onConnect       }, [onConnect])
+  useEffect(() => { onDisconnectRef.current    = onDisconnect    }, [onDisconnect])
   useEffect(() => { onSectionUpdateRef.current = onSectionUpdate }, [onSectionUpdate])
   useEffect(() => { onAssignSectionRef.current = onAssignSection }, [onAssignSection])
 
@@ -105,39 +109,58 @@ export default function GraphCanvas({ nodes, sections, handState, mode, videoRef
     const dock = dockRef.current
     const ds   = w2s(dragged.x, dragged.y, cam, cw, ch)
 
-    let hit = null
+    let hit = null, hitMode = 'connect'
     for (const n of ns) {
       if (n === dragged || excludes.includes(n)) continue
-      if (dragged.parentIds && dragged.parentIds.includes(n.id)) continue
       const ts = w2s(n.x, n.y, cam, cw, ch)
-      if (Math.hypot(ds.x - ts.x, ds.y - ts.y) < 100) { hit = n; break }
+      if (Math.hypot(ds.x - ts.x, ds.y - ts.y) < 160) {
+        if (dragged.parentIds && dragged.parentIds.includes(n.id)) {
+          hit = n; hitMode = 'detach'
+        } else {
+          hit = n; hitMode = 'connect'
+        }
+        break
+      }
     }
 
     if (hit) {
       if (dock.target !== hit) {
-        if (dock.target) dock.target.pinned = false
-        dock.target = hit; dock.startTime = Date.now()
-        hit.pinned = true
+        // Hysteresis: if the timer is already well underway, don't reset just
+        // because jitter briefly makes a different node appear closer.
+        const elapsed = dock.startTime ? Date.now() - dock.startTime : Infinity
+        if (elapsed < 200) {
+          if (dock.target) dock.target.pinned = false
+          dock.target = hit; dock.startTime = Date.now(); dock.mode = hitMode
+          hit.pinned = true
+        }
+        // else keep the existing timer running against the original target
       } else if (Date.now() - dock.startTime >= DOCK_MS) {
         hit.pinned = false
         const childId = dragged.id, parentId = hit.id
-        dragged.role = 'child'
-        if (!dragged.parentIds) dragged.parentIds = []
-        dragged.parentIds.push(parentId)
-        if (hit.role !== 'parent') hit.role = 'parent'
-        onConnectRef.current?.(childId, parentId)
-        connFlashRef.current.push({ childId, parentId, time: Date.now() })
-        dock.target = null; dock.startTime = null
+
+        if (dock.mode === 'detach') {
+          dragged.parentIds = (dragged.parentIds || []).filter(id => id !== parentId)
+          if (dragged.parentIds.length === 0) dragged.role = 'standalone'
+          onDisconnectRef.current?.(childId, parentId)
+        } else {
+          dragged.role = 'child'
+          if (!dragged.parentIds) dragged.parentIds = []
+          if (!dragged.parentIds.includes(parentId)) dragged.parentIds.push(parentId)
+          if (hit.role !== 'parent') hit.role = 'parent'
+          onConnectRef.current?.(childId, parentId)
+          connFlashRef.current.push({ childId, parentId, time: Date.now() })
+        }
+        dock.target = null; dock.startTime = null; dock.mode = 'connect'
       }
     } else {
       if (dock.target) dock.target.pinned = false
-      dock.target = null; dock.startTime = null
+      dock.target = null; dock.startTime = null; dock.mode = 'connect'
     }
   }, [])
 
   const resetDock = useCallback(() => {
     if (dockRef.current.target) dockRef.current.target.pinned = false
-    dockRef.current.target = null; dockRef.current.startTime = null
+    dockRef.current.target = null; dockRef.current.startTime = null; dockRef.current.mode = 'connect'
   }, [])
 
   const checkSectionDock = useCallback((dragged, cw, ch) => {
@@ -177,6 +200,8 @@ export default function GraphCanvas({ nodes, sections, handState, mode, videoRef
     const sp2w = sp => ({ x: (sp.x - cw/2 - cam.x)/cam.zoom, y: (sp.y - ch/2 - cam.y)/cam.zoom })
     const scr  = n  => w2s(n.x, n.y, cam, cw, ch)
 
+    zoomingRef.current = false
+
     ns.forEach(n => { n.hovered = false })
     for (const h of hs) {
       if (!isPinching(h.lms)) {
@@ -186,6 +211,7 @@ export default function GraphCanvas({ nodes, sections, handState, mode, videoRef
     }
 
     if (hs.length === 2 && isPinching(hs[0].lms) && isPinching(hs[1].lms) && !g.h[0].node && !g.h[1].node) {
+      zoomingRef.current = true
       const sA = pinchScreen(hs[0].lms, cw, ch), sB = pinchScreen(hs[1].lms, cw, ch)
       const d   = Math.hypot(sA.x-sB.x, sA.y-sB.y)
       const mid = { x:(sA.x+sB.x)/2, y:(sA.y+sB.y)/2 }
@@ -223,7 +249,7 @@ export default function GraphCanvas({ nodes, sections, handState, mode, videoRef
             c.anchored = !!c.sectionId
           })
           s.children=[]; s.cOff=[]; s.node=null
-          if (i === 0) { resetDock(); resetSectionDock() }
+          resetDock(); resetSectionDock()
         }
         if (i === 0) g.panStart = null
         continue
@@ -278,7 +304,7 @@ export default function GraphCanvas({ nodes, sections, handState, mode, videoRef
             c.anchored = !!c.sectionId
           })
           s.children=[]; s.cOff=[]; s.node=null
-          if (i === 0) { resetDock(); resetSectionDock() }
+          resetDock(); resetSectionDock()
         }
         if (i === 0) g.panStart = null
       }
@@ -316,7 +342,7 @@ export default function GraphCanvas({ nodes, sections, handState, mode, videoRef
       if (modeRef.current === 'hand' && handRef.current.length > 0) processHands(handRef.current, cw, ch)
 
       const ns = nodesRef.current
-      stepPhysics(ns, [])
+      if (!zoomingRef.current) stepPhysics(ns, [])
 
       const dragged = mouseRef.current.node || gestureRef.current.h[0].node || gestureRef.current.h[1].node
       let activeSectionId = null
@@ -326,23 +352,29 @@ export default function GraphCanvas({ nodes, sections, handState, mode, videoRef
         }
       }
 
-      drawSections(ctx, sectionsRef.current, activeSectionId, cam, cw, ch)
+      // 1. Section backgrounds — behind everything
+      drawSectionBodies(ctx, sectionsRef.current, activeSectionId, cam, cw, ch)
 
-      // Section dock progress bar
+      // Section dock progress bar sits with the bodies
       const sdock = sectionDockRef.current
       if (sdock.target && sdock.startTime) {
         const p = Math.min(1, (now - sdock.startTime) / DOCK_MS)
         drawSectionDockProgress(ctx, sdock.target, p, cam, cw, ch)
       }
 
+      // 2. Edges
+      applyTagHighlights(ns)
+      drawTagLinks(ctx, ns, cam, cw, ch)
       drawParentEdges(ctx, ns, cam, cw, ch)
+
+      // 3. Nodes
       ns.forEach(n => drawNode(ctx, n, cam, cw, ch))
 
       // Card-to-card dock ring
       const dock = dockRef.current
       if (dock.target && dock.startTime) {
         const p = Math.min(1, (now - dock.startTime) / DOCK_MS)
-        drawDockRing(ctx, dock.target, p, cam, cw, ch)
+        drawDockRing(ctx, dock.target, p, cam, cw, ch, dock.mode)
       }
 
       // Connection flash animations
@@ -361,6 +393,9 @@ export default function GraphCanvas({ nodes, sections, handState, mode, videoRef
         if (sec && nd) drawSectionLockFlash(ctx, sec, nd, (now - f.time) / SECTION_FLASH_MS, cam, cw, ch)
       }
 
+      // 4. Section labels — drawn last so they always render above node cards
+      drawSectionLabels(ctx, sectionsRef.current, cam, cw, ch)
+
       if (modeRef.current === 'hand') {
         for (const h of handRef.current) {
           const color = h.handedness === 'Left' ? '#00aaff' : '#00ff99'
@@ -368,6 +403,12 @@ export default function GraphCanvas({ nodes, sections, handState, mode, videoRef
           if (isPinching(h.lms)) drawPinchRing(ctx, h.lms, color, cw, ch)
           else { drawApproachRing(ctx, h.lms, color, cw, ch); drawCursor(ctx, h.lms, color, cw, ch) }
         }
+      }
+
+      if (modeRef.current === 'mouse') {
+        const mp = mousePosRef.current
+        const grabbed = !!mouseRef.current.node || !!mouseRef.current.section
+        drawMouseCursor(ctx, mp.x, mp.y, grabbed)
       }
 
       rafId = requestAnimationFrame(frame)
@@ -432,6 +473,7 @@ export default function GraphCanvas({ nodes, sections, handState, mode, videoRef
     function onMouseMove(e) {
       if (modeRef.current !== 'mouse') return
       const m = mouseRef.current
+      mousePosRef.current = { x: e.clientX, y: e.clientY }
       nodesRef.current.forEach(n => { n.hovered = false })
       const h = hitNode(e); if (h) h.hovered = true
 

@@ -65,6 +65,20 @@ export default function App() {
     }))
   }
 
+  function onDisconnect(childId, parentId) {
+    setNodes(prev => prev.map(n => {
+      if (n.id === childId) {
+        const newParentIds = (n.parentIds || []).filter(id => id !== parentId)
+        return { ...n, parentIds: newParentIds, role: newParentIds.length === 0 ? 'standalone' : 'child' }
+      }
+      if (n.id === parentId) {
+        const stillHasChildren = prev.some(c => c.id !== childId && (c.parentIds || []).includes(parentId))
+        if (!stillHasChildren) return { ...n, role: 'standalone' }
+      }
+      return n
+    }))
+  }
+
   function onSwap(nodeId, parentNodeId) {
     setNodes(prev => prev.map(n => {
       if (n.id === nodeId) {
@@ -125,6 +139,7 @@ export default function App() {
             onNodeClick={onNodeClick}
             onStatsUpdate={onStatsUpdate}
             onConnect={onConnect}
+            onDisconnect={onDisconnect}
             onSectionUpdate={onSectionUpdate}
             onAssignSection={onAssignSection}
           />
@@ -159,6 +174,7 @@ export default function App() {
           onSave={saveNode}
           onClose={() => setEditingId(null)}
           onSwap={onSwap}
+          onDetach={onDisconnect}
         />
       )}
     </>
